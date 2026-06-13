@@ -1,3 +1,4 @@
 streamlit
 pandas
 vnstock3
+ipython
