@@ -4,25 +4,38 @@ import time
 from datetime import datetime
 from vnstock import Vnstock
 
-# 1. Cấu hình giao diện trang web dạng tràn màn hình để hiển thị bảng giá rộng
-st.set_page_config(page_title="Bảng Giá Chứng Khoán Trực Tuyến", layout="wide", page_icon="📈")
+# 1. Giao diện tràn màn hình tối đa để hiển thị bảng điện tử nhiều cột
+st.set_page_config(page_title="Bảng Giá Chứng Khoán Chi Tiết", layout="wide", page_icon="⚡")
 
-if 'db_price_board' not in st.session_state:
-    st.session_state.db_price_board = pd.DataFrame()
+if 'db_full_board' not in st.session_state:
+    st.session_state.db_full_board = pd.DataFrame()
 
-# --- HÀM LẤY BẢNG GIÁ REAL-TIME CHI TIẾT ---
-def fetch_price_board(san_giao_dich):
+# --- HÀM QUÉT TOÀN BỘ BƯỚC GIÁ REAL-TIME THEO SÀN ---
+def fetch_full_price_board(san_giao_dich):
     try:
-        # Khởi tạo đối tượng lấy dữ liệu từ nguồn bảng giá TCBS hoặc SSI
-        stock = Vnstock().stock(symbol='FPT', source='TCBS')
+        # Bước 1: Gọi nguồn dữ liệu cơ sở khởi tạo
+        stock_init = Vnstock().stock(symbol='FPT', source='VCI')
         
-        # Gọi hàm lấy toàn bộ bảng giá của một sàn (HOSE, HNX, hoặc UPCOM)
-        # Hàm này trả về chi tiết giá Khớp lệnh, Mua, Bán, Trần, Sàn, TC...
-        df = stock.trading.price_board(market=san_giao_dich)
+        # Bước 2: Tự động lấy danh sách toàn bộ các mã đang niêm yết trên sàn đã chọn
+        df_symbols = stock_init.listing.symbols_by_exchange()
+        if df_symbols is None or df_symbols.empty:
+            return None
+            
+        # Lọc đúng các mã thuộc sàn người dùng chọn (HOSE, HNX, UPCOM)
+        df_filtered_market = df_symbols[df_symbols['exchange'] == san_giao_dich]
+        list_tickers = df_filtered_market['symbol'].tolist()
         
-        if df is not None and not df.empty:
-            # Chỉ định chọn và sắp xếp các cột theo thứ tự giống bảng giá thực tế
-            # Lưu ý: Tên cột có thể thay đổi nhẹ tùy theo phiên bản, dưới đây là các cột tiêu chuẩn:
+        if not list_tickers:
+            return None
+
+        # Bước 3: Đổi sang nguồn TCBS để kéo bảng giá chi tiết bước giá giao dịch
+        stock_board = Vnstock().stock(symbol='FPT', source='TCBS')
+        
+        # Truy vấn thông tin bước giá chi tiết (mua/bán/khớp) cho danh sách mã vừa quét
+        df_raw_board = stock_board.trading.price_board(symbols=list_tickers)
+        
+        if df_raw_board is not None and not df_raw_board.empty:
+            # Sắp xếp và ánh xạ các cột dữ liệu theo đúng chuẩn bảng điện tử thực tế
             columns_mapping = {
                 'symbol': 'Mã CK',
                 're': 'TC',
@@ -39,63 +52,64 @@ def fetch_price_board(san_giao_dich):
                 'high': 'Cao', 'low': 'Thấp'
             }
             
-            # Lọc các cột tồn tại trong dữ liệu trả về để tránh lỗi
-            available_cols = [col for col in columns_mapping.keys() if col in df.columns]
-            df_filtered = df[available_cols].copy()
-            df_filtered.rename(columns={col: columns_mapping[col] for col in available_cols}, inplace=True)
+            # Lọc bớt cột thừa, giữ lại đúng cấu hình bảng điện tử
+            available_cols = [col for col in columns_mapping.keys() if col in df_raw_board.columns]
+            df_final = df_raw_board[available_cols].copy()
+            df_final.rename(columns={col: columns_mapping[col] for col in available_cols}, inplace=True)
             
-            df_filtered['Cập Nhật'] = datetime.now().strftime('%H:%M:%S')
-            return df_filtered
+            # Chèn thêm cột thời gian cập nhật vào đầu bảng
+            df_final.insert(0, 'Thời Gian', datetime.now().strftime('%H:%M:%S'))
+            return df_final
         else:
             return None
     except Exception as e:
-        st.error(f"Lỗi kết nối dữ liệu bảng giá: {e}")
+        st.error(f"Lỗi hệ thống khi tải bảng giá: {e}")
         return None
 
-# --- GIAO DIỆN WEB ---
-st.title("⚡ Hệ Thống Bảng Giá Chứng Khoán Trực Tuyến")
+# --- GIAO DIỆN CHÍNH CỦA TRANG WEB ---
+st.title("⚡ Bảng Điện Tử Chứng Khoán Trực Tuyến Toàn Sàn")
 
 with st.sidebar:
-    st.header("⚙️ Tùy chọn Sàn")
-    # Cho phép bạn chọn xem bảng giá của từng sàn giống như các tab HOSE, HNX trên ảnh
-    selected_market = st.selectbox("Chọn sàn giao dịch:", ["HOSE", "HNX", "UPCOM"])
+    st.header("⚙️ Phân Loại Thị Trường")
+    # Thay đổi tab sàn linh hoạt HOSE, HNX, UPCOM giống hệt trong ảnh bạn gửi
+    selected_market = st.selectbox("Chọn Sàn Giao Dịch:", ["HOSE", "HNX", "UPCOM"])
     st.markdown("---")
-    auto_update = st.toggle("Tự động làm mới bảng giá (10 giây)")
+    auto_refresh = st.toggle("Tự động quét liên tục (Mỗi 10 giây)")
 
-tab1, tab2 = st.tabs(["📊 Bảng Giá Trực Tuyến", "📥 Xuất Dữ Liệu Excel"])
+tab1, tab2 = st.tabs(["📊 Bảng Điện Tử Real-time", "📥 Lưu File Excel"])
 
-if auto_update:
+if auto_refresh:
     with tab1:
-        st.info(f"🔄 Đang tự động cập nhật bảng giá sàn {selected_market} liên tục...")
+        st.info(f"🔄 Hệ thống đang tự động cập nhật dữ liệu bảng giá sàn {selected_market}...")
         placeholder = st.empty()
-        while auto_update:
-            df_board = fetch_price_board(selected_market)
+        while auto_refresh:
+            df_board = fetch_full_price_board(selected_market)
             if df_board is not None:
                 with placeholder.container():
-                    st.write(f"⏱️ *Dữ liệu cập nhật lúc: {datetime.now().strftime('%H:%M:%S')} - Tổng số: {len(df_board)} mã*")
-                    st.dataframe(df_board, use_container_width=True, height=600)
-                    st.session_state.db_price_board = df_board
+                    st.write(f"⏱️ *Dữ liệu toàn sàn cập nhật lúc: {datetime.now().strftime('%H:%M:%S')} - Tổng: {len(df_board)} mã cổ phiếu*")
+                    st.dataframe(df_board, use_container_width=True, height=650)
+                    st.session_state.db_full_board = df_board
             time.sleep(10)
 else:
     with tab1:
-        if st.button(f"🚀 Tải bảng giá sàn {selected_market}", type="primary"):
-            with st.spinner("Đang kết nối đến bảng giá trực tuyến..."):
-                df_board = fetch_price_board(selected_market)
+        if st.button(f"🚀 Tải bảng điện chi tiết sàn {selected_market}", type="primary"):
+            with st.spinner("Đang xử lý và đồng bộ dữ liệu bước giá toàn sàn..."):
+                df_board = fetch_full_price_board(selected_market)
                 if df_board is not None:
-                    st.success(f"Đã tải xong bảng giá sàn {selected_market}!")
-                    st.dataframe(df_board, use_container_width=True, height=600)
-                    st.session_state.db_price_board = df_board
+                    st.success(f"Đã tải thành công chi tiết bước giá của {len(df_board)} mã sàn {selected_market}!")
+                    st.dataframe(df_board, use_container_width=True, height=650)
+                    st.session_state.db_full_board = df_board
 
 with tab2:
-    st.subheader("📥 Tải bảng giá hiện tại về máy tính")
-    if not st.session_state.db_price_board.empty:
-        st.dataframe(st.session_state.db_price_board, use_container_width=True)
-        csv_data = st.session_state.db_price_board.to_csv(index=False).encode('utf-8')
+    st.subheader("📥 Xuất dữ liệu bảng điện")
+    if not st.session_state.db_full_board.empty:
+        st.dataframe(st.session_state.db_full_board, use_container_width=True)
+        csv_data = st.session_state.db_full_board.to_csv(index=False).encode('utf-8')
         st.download_button(
-            label="📥 Xuất bảng giá này ra file Excel (.CSV)",
+            label="📥 Tải file dữ liệu bảng giá đầy đủ (.CSV)",
             data=csv_data,
-            file_name=f"bang_gia_{selected_market}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+            file_name=f"bang_dien_chi_tiet_{selected_market}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
             mime="text/csv"
         )
     else:
-        st.write("Chưa có dữ liệu lưu trữ tạm thời. Hãy bấm nút tải ở Tab 1 trước.")
+        st.write("Chưa có dữ liệu lịch sử tạm thời. Vui lòng nhấn nút tải dữ liệu ở Tab 1 trước.")
