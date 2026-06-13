@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import time
 from datetime import datetime
+# Cú pháp import chuẩn của Vnstock v4
 from vnstock import Vnstock
 
 # 1. Cấu hình giao diện trang web tràn màn hình rộng để hiển thị bảng điện tử
@@ -10,29 +11,30 @@ st.set_page_config(page_title="Bảng Giá Chứng Khoán Chi Tiết", layout="w
 if 'db_full_board' not in st.session_state:
     st.session_state.db_full_board = pd.DataFrame()
 
-# --- HÀM QUÉT TOÀN BỘ BƯỚC GIÁ REAL-TIME SỬ DỤNG HỆ THỐNG ĐỊNH TUYẾN MỚI ---
+# --- HÀM QUÉT TOÀN BỘ BƯỚC GIÁ REAL-TIME SỬ DỤNG VNSTOCK V4 ---
 def fetch_full_price_board(san_giao_dich):
     try:
-        # Sử dụng giao diện hợp nhất Unified UI của Vnstock v4
-        # Hệ thống tự động chọn nguồn API tốt nhất đang hoạt động (KBS hoặc VCI) để kéo dữ liệu
-        stock_api = Vnstock()
+        # Sử dụng cấu hình nạp thông qua lớp chức năng chính của Vnstock v4
+        # Thiết lập nguồn mặc định là VCI hoặc KBS để đảm bảo tính ổn định cao nhất
+        stock = Vnstock().stock(symbol='FPT', source='VCI')
         
-        # 1. Lấy danh sách toàn bộ mã chứng khoán theo sàn người dùng chọn
-        df_symbols = stock_api.listing.symbols_by_exchange()
+        # 1. Gọi trực tiếp hàm lấy tất cả mã chứng khoán phân theo sàn giao dịch từ cấu hình gốc
+        df_symbols = stock.listing.symbols_by_exchange()
         if df_symbols is None or df_symbols.empty:
             return None
             
+        # Lọc đúng các mã thuộc sàn người dùng chọn (HOSE, HNX, UPCOM)
         df_filtered_market = df_symbols[df_symbols['exchange'] == san_giao_dich]
         list_tickers = df_filtered_market['symbol'].tolist()
         
         if not list_tickers:
             return None
 
-        # 2. Truy xuất bảng giá bước giá (Price board) trực tiếp bằng phương thức Unified
-        df_raw_board = stock_api.market.price_board(symbols=list_tickers)
+        # 2. Truy xuất trực tiếp bảng điện tử (Price board) cho danh sách mã vừa quét
+        df_raw_board = stock.trading.price_board(symbols=list_tickers)
         
         if df_raw_board is not None and not df_raw_board.empty:
-            # Sắp xếp các cột chuẩn bảng điện tử thực tế: TC, Trần, Sàn, Giá mua, Khớp lệnh, Giá bán
+            # Sắp xếp các cột chuẩn bảng điện tử thực tế: Mã CK, TC, Trần, Sàn, Giá mua, Khớp lệnh, Giá bán
             columns_mapping = {
                 'symbol': 'Mã CK',
                 're': 'TC',
@@ -53,6 +55,7 @@ def fetch_full_price_board(san_giao_dich):
             df_final = df_raw_board[available_cols].copy()
             df_final.rename(columns={col: columns_mapping[col] for col in available_cols}, inplace=True)
             
+            # Chèn thêm cột thời gian cập nhật vào đầu bảng
             df_final.insert(0, 'Thời Gian', datetime.now().strftime('%H:%M:%S'))
             return df_final
         else:
@@ -87,7 +90,7 @@ if auto_refresh:
 else:
     with tab1:
         if st.button(f"🚀 Tải bảng điện chi tiết sàn {selected_market}", type="primary"):
-            with st.spinner("Đang xử lý và đồng bộ dữ liệu bước giá toàn sàn tự động..."):
+            with st.spinner("Đang xử lý và đồng bộ dữ liệu bước giá toàn sàn từ hệ thống..."):
                 df_board = fetch_full_price_board(selected_market)
                 if df_board is not None:
                     st.success(f"Đã tải thành công chi tiết bước giá của {len(df_board)} mã sàn {selected_market}!")
