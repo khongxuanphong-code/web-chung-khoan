@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 import time
 from datetime import datetime
-# Cú pháp import chuẩn của Vnstock v4
 from vnstock import Vnstock
 
 # 1. Cấu hình giao diện trang web tràn màn hình rộng để hiển thị bảng điện tử
@@ -11,27 +10,14 @@ st.set_page_config(page_title="Bảng Giá Chứng Khoán Chi Tiết", layout="w
 if 'db_full_board' not in st.session_state:
     st.session_state.db_full_board = pd.DataFrame()
 
-# --- HÀM QUÉT TOÀN BỘ BƯỚC GIÁ REAL-TIME SỬ DỤNG VNSTOCK V4 ---
-def fetch_full_price_board(san_giao_dich):
+# --- HÀM QUÉT BƯỚC GIÁ REAL-TIME THEO DANH SÁCH MÃ CHỌN LỌC ---
+def fetch_custom_price_board(ticker_list):
     try:
-        # Sử dụng cấu hình nạp thông qua lớp chức năng chính của Vnstock v4
-        # Thiết lập nguồn mặc định là VCI hoặc KBS để đảm bảo tính ổn định cao nhất
+        # Khởi tạo nguồn dữ liệu từ Vietcap (VCI) cực kỳ ổn định
         stock = Vnstock().stock(symbol='FPT', source='VCI')
         
-        # 1. Gọi trực tiếp hàm lấy tất cả mã chứng khoán phân theo sàn giao dịch từ cấu hình gốc
-        df_symbols = stock.listing.symbols_by_exchange()
-        if df_symbols is None or df_symbols.empty:
-            return None
-            
-        # Lọc đúng các mã thuộc sàn người dùng chọn (HOSE, HNX, UPCOM)
-        df_filtered_market = df_symbols[df_symbols['exchange'] == san_giao_dich]
-        list_tickers = df_filtered_market['symbol'].tolist()
-        
-        if not list_tickers:
-            return None
-
-        # 2. Truy xuất trực tiếp bảng điện tử (Price board) cho danh sách mã vừa quét
-        df_raw_board = stock.trading.price_board(symbols=list_tickers)
+        # Gọi hàm lấy bảng giá chi tiết cho danh sách mã cụ thể (Giải pháp tránh RetryError)
+        df_raw_board = stock.trading.price_board(symbols=ticker_list)
         
         if df_raw_board is not None and not df_raw_board.empty:
             # Sắp xếp các cột chuẩn bảng điện tử thực tế: Mã CK, TC, Trần, Sàn, Giá mua, Khớp lệnh, Giá bán
@@ -65,37 +51,51 @@ def fetch_full_price_board(san_giao_dich):
         return None
 
 # --- GIAO DIỆN CHÍNH CỦA TRANG WEB ---
-st.title("⚡ Bảng Điện Tử Chứng Khoán Trực Tuyến Toàn Sàn")
+st.title("⚡ Bảng Điện Tử Chứng Khoán Trực Tuyến")
 
 with st.sidebar:
-    st.header("⚙️ Phân Loại Thị Trường")
-    selected_market = st.selectbox("Chọn Sàn Giao Dịch:", ["HOSE", "HNX", "UPCOM"])
+    st.header("⚙️ Danh Mục Theo Dõi")
+    # Cho phép người dùng tự điền các mã muốn xem, mặc định sẵn danh sách các mã lớn để hiển thị luôn
+    user_tickers = st.text_area(
+        "Nhập các mã cổ phiếu bạn muốn theo dõi (Cách nhau bởi dấu phẩy):",
+        value="FPT, HPG, TCB, VHM, SSI, VND, VNM, MSN, VIC, VRE, STB, MBB"
+    )
+    
+    # Chuyển đổi chuỗi nhập thành danh sách List Python
+    list_tickers = [ticker.strip().upper() for ticker in user_tickers.split(",") if ticker.strip()]
+    
     st.markdown("---")
-    auto_refresh = st.toggle("Tự động quét liên tục (Mỗi 10 giây)")
+    auto_refresh = st.toggle("Tự động làm mới bảng giá (Mỗi 10 giây)")
 
 tab1, tab2 = st.tabs(["📊 Bảng Điện Tử Real-time", "📥 Lưu File Excel"])
 
 if auto_refresh:
     with tab1:
-        st.info(f"🔄 Hệ thống đang tự động cập nhật dữ liệu bảng giá sàn {selected_market}...")
+        st.info("🔄 Hệ thống đang tự động cập nhật bảng giá liên tục...")
         placeholder = st.empty()
         while auto_refresh:
-            df_board = fetch_full_price_board(selected_market)
-            if df_board is not None:
-                with placeholder.container():
-                    st.write(f"⏱️ *Dữ liệu toàn sàn cập nhật lúc: {datetime.now().strftime('%H:%M:%S')} - Tổng: {len(df_board)} mã cổ phiếu*")
-                    st.dataframe(df_board, use_container_width=True, height=650)
-                    st.session_state.db_full_board = df_board
+            if list_tickers:
+                df_board = fetch_custom_price_board(list_tickers)
+                if df_board is not None:
+                    with placeholder.container():
+                        st.write(f"⏱️ *Dữ liệu cập nhật lúc: {datetime.now().strftime('%H:%M:%S')} - Đang theo dõi: {len(df_board)} mã*")
+                        st.dataframe(df_board, use_container_width=True, height=500)
+                        st.session_state.db_full_board = df_board
+            else:
+                st.warning("Vui lòng nhập ít nhất 1 mã cổ phiếu vào thanh bên trái.")
             time.sleep(10)
 else:
     with tab1:
-        if st.button(f"🚀 Tải bảng điện chi tiết sàn {selected_market}", type="primary"):
-            with st.spinner("Đang xử lý và đồng bộ dữ liệu bước giá toàn sàn từ hệ thống..."):
-                df_board = fetch_full_price_board(selected_market)
-                if df_board is not None:
-                    st.success(f"Đã tải thành công chi tiết bước giá của {len(df_board)} mã sàn {selected_market}!")
-                    st.dataframe(df_board, use_container_width=True, height=650)
-                    st.session_state.db_full_board = df_board
+        if st.button("🚀 Tải bảng điện chi tiết", type="primary"):
+            if list_tickers:
+                with st.spinner("Đang đồng bộ dữ liệu bước giá từ hệ thống..."):
+                    df_board = fetch_custom_price_board(list_tickers)
+                    if df_board is not None:
+                        st.success(f"Đã tải thành công chi tiết bước giá của danh mục theo dõi!")
+                        st.dataframe(df_board, use_container_width=True, height=500)
+                        st.session_state.db_full_board = df_board
+            else:
+                st.warning("Vui lòng nhập ít nhất 1 mã cổ phiếu vào thanh bên trái.")
 
 with tab2:
     st.subheader("📥 Xuất dữ liệu bảng điện")
@@ -103,9 +103,9 @@ with tab2:
         st.dataframe(st.session_state.db_full_board, use_container_width=True)
         csv_data = st.session_state.db_full_board.to_csv(index=False).encode('utf-8')
         st.download_button(
-            label="📥 Tải file dữ liệu bảng giá đầy đủ (.CSV)",
+            label="📥 Tải file dữ liệu danh mục theo dõi (.CSV)",
             data=csv_data,
-            file_name=f"bang_dien_chi_tiet_{selected_market}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+            file_name=f"danh_muc_theo_doi_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
             mime="text/csv"
         )
     else:
